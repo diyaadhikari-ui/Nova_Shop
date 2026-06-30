@@ -11,11 +11,11 @@ const pool = new Pool({
 });
 
 pool.on('connect', () => {
-  console.log('✅ Connected to PostgreSQL database');
+  console.log(' Connected to PostgreSQL database');
 });
 
 pool.on('error', (err) => {
-  console.error('❌ PostgreSQL pool error:', err);
+  console.error(' PostgreSQL pool error:', err);
 });
 
 export const query = async (text, params) => {
