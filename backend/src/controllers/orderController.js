@@ -4,21 +4,27 @@ import { query } from '../config/database.js';
 export const createOrder = async (req, res) => {
   try {
     const {
-      shippingFullName, shippingPhone,
-      shippingAddress, shippingCity,
-      shippingProvince, shippingPostalCode,
-      paymentMethod, notes
+      shippingFullName,
+      shippingPhone,
+      shippingAddress,
+      shippingCity,
+      shippingProvince,
+      shippingPostalCode,
+      paymentMethod,
+      notes,
+      items
     } = req.body;
 
-    if (!shippingFullName || !shippingPhone ||
-        !shippingAddress || !shippingCity) {
+    if (!shippingFullName || !shippingPhone || !shippingAddress || !shippingCity) {
       return res.status(400).json({
         success: false,
         message: 'Shipping information is required'
       });
     }
 
-    // Get cart items
+    let cartItems = [];
+
+    // First try DB cart
     const cartResult = await query(
       `SELECT ci.*, a.title, a.image_url, a.base_price,
               av.final_price, ps.label as size_label,
@@ -32,28 +38,39 @@ export const createOrder = async (req, res) => {
       [req.user.id]
     );
 
-    if (!cartResult.rows.length) {
+    cartItems = cartResult.rows;
+
+    // If DB cart empty, use frontend items
+    if (!cartItems.length && items?.length) {
+      cartItems = items.map((item) => ({
+        artwork_id: item.artworkId,
+        variant_id: item.variantId || null,
+        title: item.title || 'Artwork',
+        image_url: item.image_url || null,
+        quantity: Number(item.quantity || 1),
+        base_price: Number(item.price || 0),
+        final_price: Number(item.price || 0),
+        size_label: item.size_label || null,
+        frame_name: item.frame_name || null
+      }));
+    }
+
+    if (!cartItems.length) {
       return res.status(400).json({
         success: false,
         message: 'Cart is empty'
       });
     }
 
-    const cartItems = cartResult.rows;
-
-    // Calculate totals
     const subtotal = cartItems.reduce((sum, item) => {
-      const price = item.final_price || item.base_price;
-      return sum + (parseFloat(price) * item.quantity);
+      const price = Number(item.final_price || item.base_price || 0);
+      return sum + price * Number(item.quantity || 1);
     }, 0);
 
     const shippingFee = subtotal > 5000 ? 0 : 200;
     const totalAmount = subtotal + shippingFee;
-
-    // Generate order number
     const orderNumber = `NS-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-    // Create order
     const orderResult = await query(
       `INSERT INTO orders (
         order_number, user_id, status, subtotal,
@@ -66,20 +83,27 @@ export const createOrder = async (req, res) => {
         $1,$2,'pending',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'unpaid',$13
       ) RETURNING *`,
       [
-        orderNumber, req.user.id, subtotal,
-        shippingFee, totalAmount,
-        shippingFullName, shippingPhone,
-        shippingAddress, shippingCity,
-        shippingProvince, shippingPostalCode,
-        paymentMethod, notes
+        orderNumber,
+        req.user.id,
+        subtotal,
+        shippingFee,
+        totalAmount,
+        shippingFullName,
+        shippingPhone,
+        shippingAddress,
+        shippingCity,
+        shippingProvince || '',
+        shippingPostalCode || '',
+        paymentMethod,
+        notes || ''
       ]
     );
 
     const order = orderResult.rows[0];
 
-    // Create order items
     for (const item of cartItems) {
-      const unitPrice = item.final_price || item.base_price;
+      const unitPrice = Number(item.final_price || item.base_price || 0);
+
       await query(
         `INSERT INTO order_items (
           order_id, artwork_id, variant_id, title,
@@ -87,20 +111,21 @@ export const createOrder = async (req, res) => {
           total_price, size_label, frame_name
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
-          order.id, item.artwork_id, item.variant_id,
-          item.title, item.image_url, item.quantity,
+          order.id,
+          item.artwork_id,
+          item.variant_id,
+          item.title,
+          item.image_url,
+          item.quantity,
           unitPrice,
-          parseFloat(unitPrice) * item.quantity,
-          item.size_label, item.frame_name
+          unitPrice * item.quantity,
+          item.size_label,
+          item.frame_name
         ]
       );
     }
 
-    // Clear cart
-    await query(
-      'DELETE FROM cart_items WHERE user_id = $1',
-      [req.user.id]
-    );
+    await query('DELETE FROM cart_items WHERE user_id = $1', [req.user.id]);
 
     res.status(201).json({
       success: true,
@@ -116,7 +141,10 @@ export const createOrder = async (req, res) => {
 
   } catch (error) {
     console.error('Create order error:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error'
+    });
   }
 };
 
@@ -143,7 +171,6 @@ export const getMyOrders = async (req, res) => {
     );
 
     res.json({ success: true, orders: ordersResult.rows });
-
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error' });
   }
@@ -230,8 +257,13 @@ export const updateOrderStatus = async (req, res) => {
     const { status } = req.body;
 
     const validStatuses = [
-      'pending', 'confirmed', 'processing',
-      'shipped', 'delivered', 'cancelled', 'refunded'
+      'pending',
+      'confirmed',
+      'processing',
+      'shipped',
+      'delivered',
+      'cancelled',
+      'refunded'
     ];
 
     if (!validStatuses.includes(status)) {
