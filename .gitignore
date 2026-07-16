@@ -1,15 +1,18 @@
-# Backend
-backend/node_modules
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+backend/uploads/
+
+# Environment variables
+.env
+frontend/.env
 backend/.env
-backend/uploads
 
-# Frontend
-frontend/node_modules
-frontend/dist
+# Build files
+dist/
+frontend/dist/
 
-# OS
-.DS_Store
-Thumbs.db
+# Logs
 *.log
-
-uploads
+npm-debug.log*
